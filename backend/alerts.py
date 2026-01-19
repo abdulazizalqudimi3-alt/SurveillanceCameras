@@ -24,12 +24,13 @@ class EnhancedEmailService:
     """
     
     def __init__(self):
-        self.smtp_server = os.environ.get('SMTP_SERVER', 'smtp.gmail.com')
-        self.smtp_port = int(os.environ.get('SMTP_PORT', 587))
-        self.smtp_username = os.environ.get('SMTP_USERNAME')
-        self.smtp_password = os.environ.get('SMTP_PASSWORD', '**** **** **** ****')
-        self.from_email = os.environ.get('FROM_EMAIL', "qudimi0chat0bot@gmail.com")
-        self.from_name = os.environ.get('FROM_NAME', 'نظام الإنذار والأمان الذكي')
+        from config import Config
+        self.smtp_server = Config.SMTP_SERVER
+        self.smtp_port = Config.SMTP_PORT
+        self.smtp_username = Config.SMTP_USERNAME
+        self.smtp_password = Config.SMTP_PASSWORD
+        self.from_email = Config.FROM_EMAIL
+        self.from_name = Config.FROM_NAME
 
     def send_email(self, to_email, subject, html_content, text_content=None):
         """
