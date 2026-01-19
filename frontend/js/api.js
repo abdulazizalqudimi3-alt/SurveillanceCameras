@@ -1,5 +1,5 @@
 class ApiClient {
-    constructor(baseUrl = 'http://localhost:5000') {
+    constructor(baseUrl = window.location.origin.includes('localhost') && !window.location.port ? '/api' : (window.location.origin.includes('localhost') ? 'http://localhost:5000' : '/api')) {
         this.baseUrl = baseUrl;
         this.token = localStorage.getItem('authToken');
     }

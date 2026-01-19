@@ -20,36 +20,34 @@ from model import (
 )
 from manager import EnhancedClassificationManager
 from alerts import send_classification_alerts, send_welcome_email
+from config import Config
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+app.config.from_object(Config)
 
 CORS(app, origins="*")
 
-app.config["JWT_SECRET_KEY"] = "c3bc8b641c93a41a243e9c34c8d2fb19922af997e00924f61feb3c526e282caf"
-app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=24)
-app.config["JWT_TOKEN_LOCATION"] = ["headers"]
-app.config["JWT_HEADER_NAME"] = "Authorization"
-app.config["JWT_HEADER_TYPE"] = "Bearer"
-app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=24)
-# app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=24,days=30)
-# app.config["SECRET_KEY"] = "1528651b4557375ac61445bec1c100aabf03139a6d3e8f50efc4b928b004f7fb"
-# app.config["JWT_COOKIE_CSRF_PROTECT"] = False
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///enhanced_security_system.db')
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-UPLOAD_FOLDER = 'uploads'
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff'}
-MAX_FILE_SIZE = 32 * 1024 * 1024
-
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+if not os.path.exists(app.config['UPLOAD_FOLDER']):
+    os.makedirs(app.config['UPLOAD_FOLDER'])
 
 db.init_app(app)
 jwt = JWTManager(app)
+
+# Ensure database tables are created
+with app.app_context():
+    try:
+        if not os.path.exists('instance'):
+            os.makedirs('instance')
+        db.create_all()
+        logger.info("تم إنشاء جداول قاعدة البيانات (إن لم تكن موجودة)")
+    except Exception as e:
+        logger.error(f"خطأ في إنشاء جداول قاعدة البيانات: {str(e)}")
 
 classification_manager = EnhancedClassificationManager()
 
@@ -61,7 +59,7 @@ def allowed_file(filename):
     المخرجات:
         bool: True إذا كان النوع مسموحاً، False إذا لم يكن
     """
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 def log_user_activity(user_id, activity_type, description, metadata=None):
     """
@@ -104,7 +102,8 @@ def health_check():
         JSON: يحتوي على حالة النظام ومعلومات الاتصال بقاعدة البيانات والنماذج
     """
     try:
-        db.session.execute('SELECT 1')
+        from sqlalchemy import text
+        db.session.execute(text('SELECT 1'))
         
         available_categories = classification_manager.get_available_categories()
         model_info = classification_manager.get_model_info()
@@ -142,8 +141,8 @@ def system_info():
             "version": "2.0.0",
             "models": model_info,
             "supported_categories": list(model_info.keys()),
-            "max_file_size": MAX_FILE_SIZE,
-            "allowed_extensions": list(ALLOWED_EXTENSIONS),
+            "max_file_size": app.config['MAX_FILE_SIZE'],
+            "allowed_extensions": list(app.config['ALLOWED_EXTENSIONS']),
             "features": [
                 "تصنيف ذكي متعدد الفئات",
                 "تنبيهات مخصصة",
@@ -295,8 +294,8 @@ def classify_image():
     """
     try:
         print("=" * 50)
-        user =  get_jwt_identity()
-        user = User.query.filter_by(id=user).first()
+        user_id = get_jwt_identity()
+        user = User.query.filter_by(id=int(user_id)).first()
         file_data = request.get_data()  
         print(f"حجم البيانات المستلمة: {len(file_data)} bytes")
         if not user:
@@ -308,8 +307,8 @@ def classify_image():
         
         if not file_data or len(file_data) == 0:
             return jsonify({"msg": "لم يتم استلام أي بيانات"}), 400
-        if len(file_data) > MAX_FILE_SIZE:
-                return jsonify({"msg": f"حجم البيانات يتجاوز الحد المسموح ({MAX_FILE_SIZE // (1024*1024)}MB)"}), 413
+        if len(file_data) > app.config['MAX_FILE_SIZE']:
+                return jsonify({"msg": f"حجم البيانات يتجاوز الحد المسموح ({app.config['MAX_FILE_SIZE'] // (1024*1024)}MB)"}), 413
 
             
         filename = secure_filename(filename)
@@ -469,7 +468,7 @@ def get_user_classification_stats():
 
 @app.route('/user/settings', methods=['GET', 'PUT'])
 @jwt_required()
-def user_settings():
+def user_settings_route():
     """
     إدارة إعدادات المستخدم
     GET: الحصول على الإعدادات الحالية
@@ -633,9 +632,8 @@ def user_categories():
 @jwt_required()
 def validate_token():
 
-
-    user_id =  int(get_jwt_identity())
-    user = User.query.filter_by(id=user_id).first()
+    user_id = get_jwt_identity()
+    user = User.query.filter_by(id=int(user_id)).first()
     if not user or not user.is_active:
         return jsonify({"success": False}), 200
     return jsonify({"success": True}), 200
@@ -706,19 +704,11 @@ def internal_error(error):
 
 
 if __name__ == '__main__':
-    with app.app_context():
-        try:
-            db.create_all()
-            logger.info("تم إنشاء قاعدة البيانات بنجاح")
-            
-            available_categories = classification_manager.get_available_categories()
-            logger.info(f"الفئات المتاحة للتصنيف: {available_categories}")
-            
-        except Exception as e:
-            logger.error(f"خطأ في تهيئة التطبيق: {str(e)}")
+    available_categories = classification_manager.get_available_categories()
+    logger.info(f"الفئات المتاحة للتصنيف: {available_categories}")
     
     app.run(
         host='0.0.0.0',
-        port=int(os.environ.get('PORT', 5000)),
-        debug=True
+        port=app.config['PORT'],
+        debug=app.config['DEBUG']
     )
